@@ -1,5 +1,9 @@
 # CHANGELOG
 
+### 0.5.0
+
+Add `embedded-hal-async` implementation.
+
 ### 0.4.2
 
 Add `write_raw_byte` to update display in smallest possible increment.
