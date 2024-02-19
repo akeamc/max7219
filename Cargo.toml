@@ -12,7 +12,8 @@ repository = "https://github.com/almindor/max7219"
 version = "0.5.0"
 
 [dependencies]
+defmt = { version = "0.3", optional = true }
 embedded-hal-async = "1.0"
 
 [features]
-defmt-03 = ["embedded-hal-async/defmt-03"]
+defmt-03 = ["embedded-hal-async/defmt-03", "dep:defmt"]

@@ -14,11 +14,11 @@ use embedded_hal_async::spi::SpiDevice;
 pub const MAX_DISPLAYS: usize = 8;
 
 /// Digits per display
-pub const MAX_DIGITS: usize = 8;
+pub const NUM_DIGITS: usize = 8;
 
 /// Possible command register values on the display chip.
 #[derive(Clone, Copy)]
-pub enum Command {
+pub enum Register {
     Noop = 0x00,
     Digit0 = 0x01,
     Digit1 = 0x02,
@@ -35,8 +35,8 @@ pub enum Command {
     DisplayTest = 0x0F,
 }
 
-impl From<Command> for u8 {
-    fn from(command: Command) -> u8 {
+impl From<Register> for u8 {
+    fn from(command: Register) -> u8 {
         command as u8
     }
 }
@@ -51,35 +51,30 @@ pub enum DecodeMode {
 }
 
 pub struct Max7219<SPI> {
-    spi: SPI,
-    decode_mode: DecodeMode,
+    pub spi: SPI,
 }
 
 impl<SPI> Max7219<SPI>
 where
     SPI: SpiDevice,
 {
-    async fn write_data(&mut self, command: impl Into<u8>, data: u8) -> Result<(), SPI::Error> {
-        self.spi.write(&[command.into(), data]).await
+    pub async fn write_reg(&mut self, register: impl Into<u8>, data: u8) -> Result<(), SPI::Error> {
+        self.spi.write(&[register.into(), data]).await
     }
 
     /// Power on
     pub async fn power_on(&mut self) -> Result<(), SPI::Error> {
-        self.write_data(Command::Power, 0x01).await
+        self.write_reg(Register::Power, 0x01).await
     }
 
     /// Powers off all connected displays
     pub async fn power_off(&mut self) -> Result<(), SPI::Error> {
-        self.write_data(Command::Power, 0x00).await
+        self.write_reg(Register::Power, 0x00).await
     }
 
     /// Clears display by settings all digits to empty
     pub async fn clear_display(&mut self) -> Result<(), SPI::Error> {
-        for i in 1..9 {
-            self.write_data(i, 0x00).await?;
-        }
-
-        Ok(())
+        self.write_raw(&[0; NUM_DIGITS]).await
     }
 
     /// Sets intensity level on the display
@@ -88,7 +83,7 @@ where
     ///
     /// * `intensity` - intensity value to set to `0x00` to 0x0F`
     pub async fn set_intensity(&mut self, intensity: u8) -> Result<(), SPI::Error> {
-        self.write_data(Command::Intensity, intensity).await
+        self.write_reg(Register::Intensity, intensity).await
     }
 
     /// Sets decode mode to be used on input sent to the display chip.
@@ -97,8 +92,7 @@ where
     ///
     /// * `mode` - the decode mode to set
     pub async fn set_decode_mode(&mut self, mode: DecodeMode) -> Result<(), SPI::Error> {
-        self.decode_mode = mode; // store what we set
-        self.write_data(Command::DecodeMode, mode as u8).await
+        self.write_reg(Register::DecodeMode, mode as u8).await
     }
 
     /// Writes byte string to the display
@@ -109,46 +103,14 @@ where
     /// * `dots` - u8 bit array specifying where to put dots in the string (1 = dot, 0 = not)
     pub async fn write_str(
         &mut self,
-        string: &[u8; MAX_DIGITS],
+        string: &[u8; NUM_DIGITS],
         dots: u8,
     ) -> Result<(), SPI::Error> {
-        let prev_dm = self.decode_mode;
-        self.set_decode_mode(DecodeMode::NoDecode).await?;
-
-        let mut digit: u8 = MAX_DIGITS as u8;
-        let mut dot_product: u8 = 0b1000_0000;
-        for b in string {
-            let dot = (dots & dot_product) > 0;
-            dot_product >>= 1;
-            self.write_data(digit, ssb_byte(*b, dot)).await?;
-
-            digit -= 1;
+        for (i, b) in string.iter().enumerate() {
+            let reg = NUM_DIGITS as u8 - i as u8; // reverse order
+            self.write_reg(reg, ssb_byte(*b, (dots & (1 << i)) != 0))
+                .await?;
         }
-
-        self.set_decode_mode(prev_dm).await?;
-
-        Ok(())
-    }
-
-    /// Writes BCD encoded string to the display
-    ///
-    /// # Arguments
-    ///
-    /// * `bcd` - the bcd encoded string slice consisting of [0-9,-,E,L,H,P]
-    /// where upper case input for alphabetic characters results in dot being set.
-    /// Length of string is always 8 bytes, use spaces for blanking.
-    pub async fn write_bcd(&mut self, bcd: &[u8; MAX_DIGITS]) -> Result<(), SPI::Error> {
-        let prev_dm = self.decode_mode;
-        self.set_decode_mode(DecodeMode::CodeBDigits7_0).await?;
-
-        let mut digit: u8 = MAX_DIGITS as u8;
-        for b in bcd {
-            self.write_data(digit, bcd_byte(*b)).await?;
-
-            digit -= 1;
-        }
-
-        self.set_decode_mode(prev_dm).await?;
 
         Ok(())
     }
@@ -182,15 +144,11 @@ where
     /// # Arguments
     ///
     /// * `raw` - an array of raw bytes to write. Each bit represents a pixel on the display
-    pub async fn write_raw(&mut self, raw: &[u8; MAX_DIGITS]) -> Result<(), SPI::Error> {
-        let prev_dm = self.decode_mode;
-        self.set_decode_mode(DecodeMode::NoDecode).await?;
-
+    pub async fn write_raw(&mut self, raw: &[u8; NUM_DIGITS]) -> Result<(), SPI::Error> {
         for (n, b) in raw.iter().enumerate() {
-            self.write_data(n as u8 + 1, *b).await?;
+            self.write_reg(n as u8 + 1, *b).await?;
         }
-
-        self.set_decode_mode(prev_dm).await
+        Ok(())
     }
 
     /// Set test mode on/off
@@ -199,15 +157,12 @@ where
     ///
     /// * `is_on` - whether to turn test mode on or off
     pub async fn set_test(&mut self, is_on: bool) -> Result<(), SPI::Error> {
-        self.write_data(Command::DisplayTest, if is_on { 0x01 } else { 0x00 })
+        self.write_reg(Register::DisplayTest, if is_on { 0x01 } else { 0x00 })
             .await
     }
 
     pub async fn new(spi: SPI) -> Result<Self, SPI::Error> {
-        let mut max7219 = Max7219 {
-            spi,
-            decode_mode: DecodeMode::NoDecode,
-        };
+        let mut max7219 = Max7219 { spi };
 
         max7219.init().await?;
         Ok(max7219)
@@ -215,32 +170,12 @@ where
 
     async fn init(&mut self) -> Result<(), SPI::Error> {
         self.set_test(false).await?; // turn testmode off
-        self.write_data(Command::ScanLimit, 0x07).await?; // set scanlimit
+        self.write_reg(Register::ScanLimit, 0x07).await?; // set scanlimit
         self.set_decode_mode(DecodeMode::NoDecode).await?; // direct decode
         self.clear_display().await?; // clear all digits
         self.power_off().await?; // power off
 
         Ok(())
-    }
-}
-
-///
-/// Translate alphanumeric ASCII bytes into BCD
-/// encoded bytes expected by the display chip.
-///
-fn bcd_byte(b: u8) -> u8 {
-    match b as char {
-        ' ' => 0b0000_1111, // "blank"
-        '-' => 0b0000_1010, // - without .
-        'e' => 0b0000_1011, // E without .
-        'E' => 0b1000_1011, // E with .
-        'h' => 0b0000_1100, // H without .
-        'H' => 0b1000_1100, // H with .
-        'l' => 0b0000_1101, // L without .
-        'L' => 0b1000_1101, // L with .
-        'p' => 0b0000_1110, // L without .
-        'P' => 0b1000_1110, // L with .
-        _ => b,
     }
 }
 
