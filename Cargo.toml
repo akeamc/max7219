@@ -1,15 +1,17 @@
 [package]
+name = "max7219-async"
+description = "Async driver for the MAX7219"
+version = "0.1.0"
 edition = "2021"
-authors = ["Maikel Wever <maikel@maikelwever.nl>", "Ales Katona <ales@katona.me>", "Åke Amcoff <ake@amcoff.net>"]
-categories = ["embedded", "hardware-support", "no-std"]
-readme = "README.md"
-description = "A platform agnostic driver to interface the MAX7219 (LED driver)"
-documentation = "https://docs.rs/max7219"
-keywords = ["embedded-hal-driver", "max7219", "ledcontrol"]
 license = "MIT"
-name = "max7219"
-repository = "https://github.com/almindor/max7219"
-version = "0.5.0"
+repository = "https://github.com/akeamc/max7219"
+authors = [
+  "Maikel Wever <maikel@maikelwever.nl>",
+  "Ales Katona <ales@katona.me>",
+  "Åke Amcoff <ake@amcoff.net>",
+]
+categories = ["embedded", "hardware-support", "no_std"]
+keywords = ["embedded-hal", "max7219", "ledcontrol", "no_std"]
 
 [dependencies]
 defmt = { version = "0.3", optional = true }

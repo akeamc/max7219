@@ -10,9 +10,6 @@
 
 use embedded_hal_async::spi::SpiDevice;
 
-/// Maximum number of displays connected in series supported by this lib.
-pub const MAX_DISPLAYS: usize = 8;
-
 /// Digits per display
 pub const NUM_DIGITS: usize = 8;
 
@@ -44,12 +41,16 @@ impl From<Register> for u8 {
 /// Decode modes for BCD encoded input.
 #[derive(Copy, Clone)]
 pub enum DecodeMode {
+    /// No decode for BCD encoded input.
     NoDecode = 0x00,
     CodeBDigit0 = 0x01,
     CodeBDigits3_0 = 0x0F,
     CodeBDigits7_0 = 0xFF,
 }
 
+/// A MAX7219 chip.
+///
+/// Currently, this driver does not support daisy-chaining multiple MAX7219 chips.
 pub struct Max7219<SPI> {
     pub spi: SPI,
 }
@@ -58,41 +59,62 @@ impl<SPI> Max7219<SPI>
 where
     SPI: SpiDevice,
 {
-    pub async fn write_reg(&mut self, register: impl Into<u8>, data: u8) -> Result<(), SPI::Error> {
+    /// Write a byte to a register on the display chip.
+    async fn write_reg(&mut self, register: impl Into<u8>, data: u8) -> Result<(), SPI::Error> {
         self.spi.write(&[register.into(), data]).await
     }
 
-    /// Power on
+    /// Power on the display.
     pub async fn power_on(&mut self) -> Result<(), SPI::Error> {
         self.write_reg(Register::Power, 0x01).await
     }
 
-    /// Powers off all connected displays
+    /// Powers off the display.
     pub async fn power_off(&mut self) -> Result<(), SPI::Error> {
         self.write_reg(Register::Power, 0x00).await
     }
 
-    /// Clears display by settings all digits to empty
+    /// Clears the display by setting all digits to empty.
     pub async fn clear_display(&mut self) -> Result<(), SPI::Error> {
         self.write_raw(&[0; NUM_DIGITS]).await
     }
 
-    /// Sets intensity level on the display
-    ///
-    /// # Arguments
-    ///
-    /// * `intensity` - intensity value to set to `0x00` to 0x0F`
+    /// Sets intensity level on the display,from `0x00` (dimmest) to `0x0F` (brightest).
     pub async fn set_intensity(&mut self, intensity: u8) -> Result<(), SPI::Error> {
         self.write_reg(Register::Intensity, intensity).await
     }
 
     /// Sets decode mode to be used on input sent to the display chip.
     ///
-    /// # Arguments
-    ///
-    /// * `mode` - the decode mode to set
+    /// See [`DecodeMode`] for more information.
     pub async fn set_decode_mode(&mut self, mode: DecodeMode) -> Result<(), SPI::Error> {
         self.write_reg(Register::DecodeMode, mode as u8).await
+    }
+
+    /// Writes a byte to a digit on the display.
+    ///
+    /// A typical 7-segment display has the following layout:
+    ///
+    /// ```txt
+    ///     A
+    ///    ---
+    /// F |   | B
+    ///   | G |
+    ///    ---
+    /// E |   | C
+    ///   | D |
+    ///    ---  . DP
+    /// ```
+    ///
+    /// | Byte        | 7  | 6 | 5 | 4 | 3 | 2 | 1 | 0 |
+    /// |-------------|----|---|---|---|---|---|---|---|
+    /// | **Segment** | DP | A | B | C | D | E | F | G |
+    ///
+    /// To display the number `5`, for example, the byte `0b0101_1011` would be
+    /// sent to the display.
+    #[inline]
+    pub async fn write_digit_bytes(&mut self, digit: u8, value: u8) -> Result<(), SPI::Error> {
+        self.write_reg(digit + 1, value).await
     }
 
     /// Writes byte string to the display
@@ -115,11 +137,7 @@ where
         Ok(())
     }
 
-    /// Writes a right justified integer with sign
-    ///
-    /// # Arguments
-    ///
-    /// * `val` - an integer i32
+    /// Writes a right justified integer with sign.
     pub async fn write_integer(&mut self, value: i32) -> Result<(), SPI::Error> {
         let mut buf = [0u8; 8];
         let j = base_10_bytes(value, &mut buf);
@@ -127,11 +145,7 @@ where
         self.write_str(&buf, 0b00000000).await
     }
 
-    /// Writes a right justified hex formatted integer with sign
-    ///
-    /// # Arguments
-    ///
-    /// * `val` - an integer i32
+    /// Writes a right justified hex formatted integer with sign.
     pub async fn write_hex(&mut self, value: u32) -> Result<(), SPI::Error> {
         let mut buf = [0u8; 8];
         let j = hex_bytes(value, &mut buf);
@@ -139,41 +153,41 @@ where
         self.write_str(&buf, 0b00000000).await
     }
 
-    /// Writes a raw value to the display
-    ///
-    /// # Arguments
-    ///
-    /// * `raw` - an array of raw bytes to write. Each bit represents a pixel on the display
+    /// Writes a raw value to the display.
     pub async fn write_raw(&mut self, raw: &[u8; NUM_DIGITS]) -> Result<(), SPI::Error> {
         for (n, b) in raw.iter().enumerate() {
-            self.write_reg(n as u8 + 1, *b).await?;
+            self.write_digit_bytes(n as u8, *b).await?;
         }
         Ok(())
     }
 
-    /// Set test mode on/off
-    ///
-    /// # Arguments
-    ///
-    /// * `is_on` - whether to turn test mode on or off
-    pub async fn set_test(&mut self, is_on: bool) -> Result<(), SPI::Error> {
-        self.write_reg(Register::DisplayTest, if is_on { 0x01 } else { 0x00 })
+    /// Enable or disable the display test mode.
+    pub async fn set_test(&mut self, enable: bool) -> Result<(), SPI::Error> {
+        self.write_reg(Register::DisplayTest, if enable { 0x01 } else { 0x00 })
             .await
     }
 
-    pub async fn new(spi: SPI) -> Result<Self, SPI::Error> {
-        let mut max7219 = Max7219 { spi };
-
-        max7219.init().await?;
-        Ok(max7219)
+    /// Create a new instance of the MAX7219 driver.
+    ///
+    /// After creating a new instance, you should call the [`Max7219::init`]
+    /// method to initialize the display.
+    pub const fn new(spi: SPI) -> Self {
+        Self { spi }
     }
 
-    async fn init(&mut self) -> Result<(), SPI::Error> {
-        self.set_test(false).await?; // turn testmode off
-        self.write_reg(Register::ScanLimit, 0x07).await?; // set scanlimit
-        self.set_decode_mode(DecodeMode::NoDecode).await?; // direct decode
-        self.clear_display().await?; // clear all digits
-        self.power_off().await?; // power off
+    /// Set the number of digits to scan (display). The value should be between 1 and 8.
+    pub async fn set_scan_limit(&mut self, limit: u8) -> Result<(), SPI::Error> {
+        self.write_reg(Register::ScanLimit, limit - 1).await
+    }
+
+    /// Initialize the display with the default settings.
+    pub async fn init(&mut self) -> Result<(), SPI::Error> {
+        self.set_test(false).await?;
+        self.set_scan_limit(NUM_DIGITS as u8).await?;
+        self.set_decode_mode(DecodeMode::NoDecode).await?;
+        self.clear_display().await?;
+        self.power_off().await?;
+        self.power_on().await?;
 
         Ok(())
     }
