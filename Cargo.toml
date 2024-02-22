@@ -6,11 +6,11 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/akeamc/max7219"
 authors = [
-  "Maikel Wever <maikel@maikelwever.nl>",
-  "Ales Katona <ales@katona.me>",
-  "Åke Amcoff <ake@amcoff.net>",
+    "Maikel Wever <maikel@maikelwever.nl>",
+    "Ales Katona <ales@katona.me>",
+    "Åke Amcoff <ake@amcoff.net>",
 ]
-categories = ["embedded", "hardware-support", "no_std"]
+categories = ["embedded", "hardware-support", "no-std"]
 keywords = ["embedded-hal", "max7219", "ledcontrol", "no_std"]
 
 [dependencies]
